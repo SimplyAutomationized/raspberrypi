@@ -1,0 +1,612 @@
+<html>
+	<head>
+		<meta name="viewport" content="initial-scale=1, maximum-scale=1"/>
+		<meta name="apple-mobile-web-app-status-bar-style" content="black">
+		<meta content="yes" name="apple-mobile-web-app-capable"/>
+		<meta name="apple-mobile-web-app-title" content="Sprinklers">
+		<link rel="stylesheet" href="Scripts/jquery.mobile-1.4.2.min.css" />
+		<!-- iOS 7 iPad (retina) -->
+        <link href="/images/irrigation-152x152.png"
+              sizes="152x152"
+              rel="apple-touch-icon">
+ 
+        <!-- iOS 6 iPad (retina) -->
+        <link href="/images/irrigation-144x144.png"
+              sizes="144x144"
+              rel="apple-touch-icon">
+ 
+        <!-- iOS 7 iPhone (retina) -->
+        <link href="/images/irrigation-120x120.png"
+              sizes="120x120"
+              rel="apple-touch-icon">
+ 
+        <!-- iOS 6 iPhone (retina) -->
+        <link href="/images/irrigation-114x114.png"
+              sizes="114x114"
+              rel="apple-touch-icon">
+ 
+        <!-- iOS 7 iPad -->
+        <link href="/images/irrigation-76x76.png"
+              sizes="76x76"
+              rel="apple-touch-icon">
+ 
+        <!-- iOS 6 iPad -->
+        <link href="/images/irrigation-72x72.png"
+              sizes="72x72"
+              rel="apple-touch-icon">
+ 
+        <!-- iOS 6 iPhone -->
+        <link href="/images/irrigation-57x57.png"
+              sizes="57x57"
+              rel="apple-touch-icon">
+		 <!-- iOS 6 & 7 iPad (retina, portrait) -->
+        <link href="/images/apple-touch-startup-image-1536x2008.png"
+              media="(device-width: 768px) and (device-height: 1024px)
+                 and (orientation: portrait)
+                 and (-webkit-device-pixel-ratio: 2)"
+              rel="apple-touch-startup-image">
+ 
+        <!-- iOS 6 & 7 iPad (retina, landscape) -->
+        <link href="/images/apple-touch-startup-image-1496x2048.png"
+              media="(device-width: 768px) and (device-height: 1024px)
+                 and (orientation: landscape)
+                 and (-webkit-device-pixel-ratio: 2)"
+              rel="apple-touch-startup-image">
+ 
+        <!-- iOS 6 iPad (portrait) -->
+        <link href="/images/apple-touch-startup-image-768x1004.png"
+              media="(device-width: 768px) and (device-height: 1024px)
+                 and (orientation: portrait)
+                 and (-webkit-device-pixel-ratio: 1)"
+              rel="apple-touch-startup-image">
+ 
+        <!-- iOS 6 iPad (landscape) -->
+        <link href="/images/apple-touch-startup-image-748x1024.png"
+              media="(device-width: 768px) and (device-height: 1024px)
+                 and (orientation: landscape)
+                 and (-webkit-device-pixel-ratio: 1)"
+              rel="apple-touch-startup-image">
+ 
+        <!-- iOS 6 & 7 iPhone 5 -->
+        <link href="/images/apple-touch-startup-image-640x1096.png"
+              media="(device-width: 320px) and (device-height: 568px)
+                 and (-webkit-device-pixel-ratio: 2)"
+              rel="apple-touch-startup-image">
+ 
+        <!-- iOS 6 & 7 iPhone (retina) -->
+        <link href="/images/apple-touch-startup-image-640x920.png"
+              media="(device-width: 320px) and (device-height: 480px)
+                 and (-webkit-device-pixel-ratio: 2)"
+              rel="apple-touch-startup-image">
+ 
+        <!-- iOS 6 iPhone -->
+        <link href="/images/apple-touch-startup-image-320x460.png"
+              media="(device-width: 320px) and (device-height: 480px)
+                 and (-webkit-device-pixel-ratio: 1)"
+              rel="apple-touch-startup-image">
+		<script src="Scripts/jquery-2.0.3.min.js"></script>
+		<script src="Scripts/jquery.mobile-1.4.2.min.js"></script>
+		<script src='Scripts/freewall.js'></script>
+		<script>
+			var webSocket;
+			function welcomeback()
+			{
+				if(webSocket.CLOSED){
+					ws();
+				}
+			}
+			function tConvert (time) {
+			  // Check correct time format and split into components
+			  time = time.toString ().match (/^([01]\d|2[0-3])(:)([0-5]\d)(:[0-5]\d)?$/) || [time];
+
+			  if (time.length > 1) { // If time format correct
+				time = time.slice (1);  // Remove full string match value
+				time[5] = +time[0] < 12 ? ' AM' : ' PM'; // Set AM/PM
+				time[0] = +time[0] % 12 || 12; // Adjust hours
+			  }
+			  return time.join (''); // return adjusted time or original string
+			}
+			function edit(station){
+				$(station).closest('tr').data('uid');
+				$('#edit').popup({overlayTheme: "b",transition:"pop"});
+				$('#edit').popup('open');
+				var stationName = $(station).closest('tr').find('.station div b').html();
+				var uid=$(station).closest('tr').attr('id');
+				$('#editStationName h2').html(stationName);
+				$('#edit_port').val($(station).closest('tr').find('.port').text());
+				$('#edit_uid').val(uid);
+				$('#edit_station').val(stationName);
+				
+			}
+			function addStationLine()
+			{
+				
+				$('#stationList tbody').append($('#template').clone().attr('id','new').fadeIn());
+			}
+			function ws() {
+				var iOS = ( navigator.userAgent.match(/(iPad|iPhone|iPod)/g) ? true : false );
+				if(!iOS)
+					webSocket = new WebSocket("wss://"+window.location.hostname+":5000/ws?page=sprinklers");
+				else
+					webSocket = new WebSocket("ws://"+window.location.hostname+":5001/ws?page=sprinklers");
+				webSocket.onopen=function(){
+				$.mobile.loading( "hide");
+				}
+				webSocket.onmessage = function(e) {
+						data = $.parseJSON(e.data)
+						
+						parseData(data);
+						//console.log("Got echo: " + e.data);
+						$.mobile.loading( "hide");
+					}
+					webSocket.onclose= function(){
+						setTimeout('ws()',5000);
+						$.mobile.loading( "show", {
+								text: 'Connection Failed :-(  Trying again...',
+								textVisible: true,
+								theme: 'a',
+								textonly: false
+									
+						 });
+					}
+			}
+			function parseData(data){
+				if(data.status!=undefined)
+				{
+					binary = data.status
+					for(x=0;x<binary.length;x++)
+						{
+							row = $('#status_'+x);
+							status_bin=(binary[x]=='1') ? "true":"false";
+							$(row).css('background',$(row).data(status_bin));
+						}
+					//console.log(data);}
+				}
+			$(document).ready(function(){
+				$(function(){
+					var wall = new freewall("#container");
+					wall.fitWidth();
+				
+				});
+				$.getJSON('sChange',function(data)
+				{
+					$(data).each(function(p,d){
+						//console.log(p,d.station)
+						row = $('#template2').clone();
+						$(row).find('.status').attr('id','status_'+d.koyo_output);
+						$(row).find('.station div').html('<b>'+d.station+'</b>').attr('href','#stationschedule');
+						$(row).find('.port').html(d.koyo_output);
+						$(row).find('.delete').data('uid',d.uid);
+						$(row).attr('id',d.uid).show().trigger('refresh');
+						$(row).data('stationName',d.station);
+						$('#stationList tbody').append(row);
+					});
+					ws();
+					addDeleteListener();
+					$('#stationschedule').on({
+						popupafterclose: function() {
+						$('#dayAdd').val(null);
+						$('#startTime').val(null);
+						$('#runTime').val(null);
+						backup_row=$('#schedTemplate').clone();
+						backup_editrow=$('#schedTemplateAdd').clone();
+						$('#scheduleRows').html('')
+						$('#scheduleRows').append(backup_row).append(backup_editrow);
+						$('#schedTemplateAdd').hide();
+						}
+					});
+				});
+				$("[data-role='popup']").on("swipeleft",function(event){
+					$(this).parent().animate({"left":"-1000px"}, "slow",function()
+					{
+						$(this).children().popup('close')
+					});
+					
+				}).on("swiperight",function(event){
+					$(this).parent().animate({"left":"2000px"}, "slow",function()
+					{
+						$(this).children().popup('close')
+					});
+				});
+			});
+			function addDeleteListener(){
+				$('.delete').on('click',function(item){
+					if (confirm('Do you wanna to remove this station? (all schedules will be removed)')) {
+					  var mydata={};
+					  mydata.cmd='remove'
+					  mydata.uid=$(this).data('uid');
+					  $.ajax({
+						type:"POST",
+						url:'sChange',
+						data: mydata,
+						dataType: 'json'								  
+					  }).done(function(data)
+					  {
+						if(data.removed>0)
+							$.when($('#'+data.removed).fadeOut()).done(function(){
+								$('#'+data.removed).remove();
+							});
+					  });
+				   } else {
+					   return false;
+				   }
+				
+				});
+			}
+			function getStationSchedule(station){
+				$.mobile.loading( "show", {
+						text: 'loading..',
+						textVisible: true,
+						theme: 'c',
+						textonly: false
+											
+					 });
+				var mydata={};
+				mydata.cmd='get'
+				mydata.uid=station//$(station).parent().attr('id');
+				$('#stationName h2').html($('#'+station).data('stationName'));
+				$('#stationschedule').data('uid',mydata.uid);
+				
+				$.ajax({
+					type:"GET",
+					url:"schedule",
+					data:mydata,
+					dataType:'json'
+					}).done(function(items){
+					//populate  popup data
+						
+						$(items).each(function(i,d){
+							var row = $('#schedTemplate').clone();
+							$(row).find('.day').html(dayOfweek(d.day_of_week));
+							$(row).find('.start_time').html(tConvert(d.time_of_day));
+							$(row).find('.run_time').html(d.run_time);
+							$(row).show();
+							$(row).find('.uid').data('uid',d.uid);
+							$(row).attr('id','sch_uid_'+d.uid);
+							$('#scheduleRows').append(row);
+						});
+						$.mobile.loading( "hide");
+						$('#stationschedule').popup({overlayTheme: "b",transition:"pop"});
+						$('#stationschedule').popup("open");
+						
+					});
+			
+			}
+			function removeSchedule(id){
+				console.log(id);
+				if(confirm('Are you sure you want to remove this?'))
+				{
+					mydata={};
+					mydata.cmd='remove';
+					mydata.uid=id;
+					$.mobile.loading( "show", {
+						text: 'Removing..',
+						textVisible: true,
+						theme: 'a',
+						textonly: false
+											
+					});
+					$.ajax({
+						type:"POST",
+						url:"schedule",
+						data:mydata,
+						dataType:'json'
+					}).done(function(data){
+						$.mobile.loading( "hide");
+						if(data.response)
+							$('#sch_uid_'+data.uid).fadeOut().remove();
+					}).error(function(data){
+						alert('error removing');
+						$.mobile.loading( "show");
+					});;
+				
+				}
+				
+			}
+			function addSchedule(station)
+			{
+				var mydata={};
+				mydata.day = $('#dayAdd').val();
+				mydata.startTime=$('#startTime').val();
+				mydata.runTime=$('#runTime').val();
+				mydata.uid=$('#stationschedule').data('uid');
+				mydata.cmd='add';
+				$.mobile.loading( "show", {
+					text: 'Adding..',
+					textVisible: true,
+					theme: 'a',
+					textonly: false
+										
+				 });
+				$.ajax({
+					type:"POST",
+					url:"schedule",
+					data:mydata,
+					dataType:'json'
+					}).done(function(data)
+					{
+						$('#dayAdd').val(null);
+						$('#startTime').val(null);
+						$('#runTime').val(null);
+						backup_row=$('#schedTemplate').clone();
+						backup_editrow=$('#schedTemplateAdd').clone();
+						$('#scheduleRows').html('')
+						$('#scheduleRows').append(backup_row).append(backup_editrow);
+						getStationSchedule($('#stationschedule').data('uid'));
+						$('#schedTemplateAdd').fadeOut();
+						$.mobile.loading( "hide");
+					});
+			}
+			function dayOfweek(day)
+			{
+				switch(day)
+				{
+					case 0:return "Mon";break;
+					case 1:return "Tue";break;
+					case 2:return "Wed";break;
+					case 3:return "Th";break;
+					case 4:return "Fri";break;
+					case 5:return "Sat";break;
+					case 6:return "Sun";break;
+				}
+			}
+			function cancelAdd(item)
+			{	$(item).closest('tr').fadeOut(100).remove() }
+			function addStation(item)
+			{
+				info={}
+				station=$(item).closest('tr').find('.newstation input').val();
+				port = $(item).closest('tr').find('.newport input').val();
+				if (isNaN(port))
+					alert('Port must be a number')
+				//validateAdd(station,port)
+				else if(station=='')
+					alert('Please choose a station name');
+				else if(port<0 && port >18)
+					alert('Please choose a valid port');
+				else
+					info.station=station;
+					info.koyo_output=port
+					info.cmd='add'
+					$.mobile.loading( "show", {
+						text: 'Adding..',
+						textVisible: true,
+						theme: 'a',
+						textonly: false
+											
+					 });
+					$.ajax({
+						type:"POST",
+						url:'sChange',
+						data: info,
+						dataType: 'json'
+						}).done(function(data){
+							row = $('#template2').clone();
+							$(row).find('.status').attr('id','status_'+info.koyo_output);
+							$(row).find('.station  div').html('<b>'+info.station+'</b>');
+							$(row).find('.port').html(info.koyo_output);
+							$(row).find('.delete').data('uid',data.newuid);
+							$(row).attr('id',data.newuid).show();
+							$('#stationList tbody').append(row);
+							$(item).closest('tr').fadeOut(100).remove();
+							$('.delete').off('click','**');
+							addDeleteListener();
+							$.mobile.loading( "hide");
+							webSocket.send('{"update":"sprinklers"}');
+					});
+			}
+			function changeOptionText()
+			{
+			
+				$('#dayAdd').prev().html($("#dayAdd option[value='"+$('#dayAdd').val()+"']").text());
+			}
+		</script>
+		<style>
+			
+			td{
+				text-align:center;
+				vertical-align:middle;
+			}
+			th
+			{
+				text-align:center;
+				vertical-align:middle;
+			}
+			.ui-checkbox
+			{
+				margin:auto;
+			}
+			.thcheckbox{
+				width:35px;
+			}
+			.port{
+				font-weight: bolder;
+				font-size: x-large;
+			}
+			@media only screen and (min-width:541px) {
+				#stationList{
+					max-width:540px;
+					margin:auto;
+				}
+				#setupHeader{
+					max-width:540px;
+					margin:auto;
+				}
+				#container
+				{
+					max-width:540px;
+					margin:auto;
+				}
+			}
+			@media only screen and (max-width:541px) {
+				#stationList{
+					max-width:100%;
+					margin:auto;
+				}
+				#content{
+					padding:0px;
+				}
+				#container
+				{
+					max-width:100%;
+					margin:auto;
+					
+				}
+				
+			}
+			.item
+			{
+				background:rgba(1,255,255,.5);
+				width:240px;
+				height:250px;
+				border-ra
+			}
+			tr
+			{
+			border-bottom: 1px solid #d6d6d6;
+			}
+		</style>
+			
+	</head>
+	<body pageShow='welcomeback();alert('hey')'>
+	<div data-role='page' id='mainmenu'>
+		<div data-role='header'><h3>Sprinklers</h3></div>		
+		<div role='main' class='ui-content'>
+			<a data-role='button' href="#stationsetup" style='max-width:320px;margin:auto;'>Spinkler Station Setup</a>
+			<a data-role='button' href="#schedulesetup" style='max-width:320px;margin:auto;'>Station Scheduling</a>
+			
+			<div data-role='collapsible' data-theme='b' id='manual_station_box' style='max-width:320px;border:1px solid silver;margin:auto;'>
+				<h4>Manual</h4>
+				<div id='manualstation_list'></div>
+			</div>
+		</div>
+	</div>
+	
+	<div data-role='page' id='stationsetup' data-url='stationsetup'>
+		<div data-role='header'>
+			<a href='#mainmenu' data-role='back' data-icon='back'>Back</a>
+			<h3>Sprinklers</h3>
+			
+		</div>
+		<div id='container' style='display:none'>
+			<div class='item'>
+			<div data-role='header' style='text-align:center;'>
+				<b>Station Setup</b></div>
+				
+			</div>
+			<div class='item'>Schedule Setup</div>
+			<div class='item'></div>
+			<div class='item'></div>
+		</div>
+		<div data-role='popup' draggable='true' id='edit' style='border:2px solid red'>
+			<div id='editStationName' data-role='header' data-fixed='true'>
+				<h2></h2>
+			</div>
+			<form data-ajax='false' id='editForm' data-role='content' action='sChange' method='post'>
+				<div style='display:inline-block;width:33%'>Station: </div>
+				<div style='display:inline-block;width:65%'>
+					<input name='station' type='text' id='edit_station' value='' />
+				</div>
+				<div style='display:inline-block;width:33%'>Port: </div>
+				<div style='display:inline-block;width:65%'>
+					<input name='port' type='text' id='edit_port' value='' />
+				</div>
+				<input type='text' name='cmd' value='edit' style='display:none' />
+				<input type='text' id='edit_uid' name='uid' value='' style='display:none' />
+				<input type='submit' name='edit'  value='Change' />
+			</form>
+			<button data-theme='b' style='width:50%;margin:auto;' onclick="$('#edit').popup('close');">Cancel</button>
+			
+		</div>
+		<div data-role='popup' id='stationschedule' style='height:400px;'>
+			<div id='stationName' data-role='header' data-fixed='true'>
+				<h2></h2>
+				<a href='#' data-icon='plus' data-iconpos='notext' class='ui-btn-right' onclick='$("#schedTemplateAdd").fadeIn()'>Add</a>
+			</div>
+			<div style='width:100%;height:350px;overflow-y:scroll; -webkit-overflow-scrolling: touch;'>
+			<table data-role='table' style='width:100%' data-mode='reflow' data-role='table' data-enhanced='true'>
+				<thead class='ui-bar-b'>
+					<th>Weekday</th>
+					<th>Start Time (24hr)</th>
+					<th>Run Time (min)</th>
+					<th>Action</th>
+				</thead>
+				<tbody id='scheduleRows'>
+					<tr id='schedTemplate' style='display:none;'>
+						<td class='day'></td>
+						<td style='max-width:100px'><div class='start_time' data-disabled="true"></div></td>
+						<td class='run_time' style='max-width:100px'></td>
+						<td class='action'><button class='uid' style='margin:auto' data-icon='delete' data-iconpos='notext' text='del' onclick='removeSchedule($(this).data("uid"))'/></td>
+					</tr>
+					<tr id='schedTemplateAdd' style='display:none;'>
+						<td class='day'>
+								<select onchange='changeOptionText()' name="dayAdd" data-mini='true' id="dayAdd">
+									<option value="0">Mon</option>
+									<option value="1">Tue</option>
+									<option value="2">Wed</option>
+									<option value="3">Thu</option>
+									<option value="4">Fri</option>
+									<option value="5">Sat</option>
+									<option value="6">Sun</option>
+								</select>
+						</td>
+						<td class='start_time' ><input type="time" id='startTime' placeholder="22:00" /></td>
+						<td class='run_time' style='max-width:100px'><input id='runTime'  type='number' min='0' max='60' placeholder="minutes"/></td>
+						<td class='ui-grid-a'>
+							<span  class='ui-block-a'><input onclick='addSchedule(this)' type='button' value='Save' data-iconpos='notext' data-icon='check'/> </span>
+							<span class='ui-block-b'><input  type='button' value='Cancel' data-iconpos='notext' data-icon='delete' onclick="$(this).closest('tr').fadeOut()"/></span>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			</div>
+		</div>
+		<div class='mycontent' data-role='content' id='content'>
+			<div id='setupHeader' data-role='header' data-theme='b'><h2>Station Setup</h2><a href='#' data-iconpos='notext' class='ui-btn-right' data-icon='plus' onclick='addStationLine()'>Add</a></div>
+			<table style='border:1px solid black;width:100%' id="stationList"  class="ui-responsive"
+					data-mode='reflow' data-role='table' data-enhanced='true' >
+				<thead class='ui-bar-b'>
+					<th>Status</th>
+					<th>Station</th>
+					<th>Koyo Port</th>
+					<th>Edit</th>
+					<th>Delete</th>
+				</thead>
+				<tbody>
+				<tr style='display:none' id='template2'>
+					<td data-uid='' class='status' data-true='blue' data-false='gray'></td>
+					<td data-uid='' style='width:150px;max-height:54px;' class='station' onclick='getStationSchedule($(this).parent().attr("id"))' >
+						<div  class='stationpopup ui-btn ui-input-btn ui-corner-all ui-shadow'  data-type='button'></div>
+					</td>
+					<td data-port='' style='width:50px' class='port'></td>
+					<td data-uid=''>
+						<div style='max-width:76px; margin:auto'><button type='button' onclick='edit(this)'>Edit</button></div>
+					</td>
+					<td style='max-width:100px;'>
+					<div style='margin:auto; max-width:28px;'>
+							<input class='delete' type='button' value='Delete' data-icon='delete' data-iconpos='notext'/>
+					</div>
+					</td>
+				</tr>
+				<tr style='display:none' id='template'>
+					<td></td>
+					<td style='width:150px' class='newstation'><input></input></td>
+					<td style='width:50px' class='newport'><input type="number" max='17' min='0'></input></td>
+					<td>
+						<div style='margin:auto; max-width:76px;'>
+							<input type='button' value='Save' onclick='addStation(this)'/>
+						</div>
+					</td>
+					<td>
+						<div style='margin:auto; max-width:100px;'>
+							<input type='button' value='Cancel' onclick='cancelAdd(this)'/>
+						</div>
+					</td>
+				</tr>
+				</tbody>
+			</table>
+		</div>
+		<div style='display:none' class='mycontent' data-role='content' id='scheduleContent'>
+		</div>
+	</body>
+</html>
