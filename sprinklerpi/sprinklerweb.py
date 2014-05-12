@@ -16,14 +16,16 @@
 ##
 ###############################################################################
 import sqlite3 as lite
-import sys,json,time
+import sys,json,time,smtplib
+from twisted.python.logfile import DailyLogFile
 from time import sleep
-import Koyo
+import Koyo,traceback
 from twisted.internet import reactor
 from twisted.python import log
 from twisted.web.server import Site
 from twisted.web.static import File
 from OpenSSL import SSL
+from os import fork,chdir,setsid,umask
 from twisted.internet import reactor,ssl,protocol
 from twisted.web.resource import Resource
 from twisted.web.wsgi import WSGIResource
@@ -33,17 +35,47 @@ from autobahn.twisted.websocket import WebSocketServerFactory, \
                                        listenWS
 mysprinkler=None
 status=None
+def writelog(msg):
+    file = open('/var/log/sprinkler.log','ab')
+    file.write(msg+' - %s\n'%time.ctime())
+    file.close()
 
 class BroadcastServerProtocol(WebSocketServerProtocol):
 
    def onOpen(self):
-      print self.peer
       self.factory.register(self)
 
    def onMessage(self, payload, isBinary):
-      if not isBinary:
-         msg = "{} from {}".format(payload.decode('utf8'), self.peer)
-         #self.factory.broadcast(msg)
+      if(json.loads(payload)['cmd']):
+        msg = json.loads(payload)
+        cmd=msg['cmd'];
+        if(cmd=='manualstart'):
+            uid=msg['uid']
+            runtime=int(msg['howlong'])
+            runtimestring=str(runtime/60).zfill(2)+":"+str(runtime%60).zfill(2)
+            state = msg['state']
+            #add entry to manual table
+            con = lite.connect('/home/pi/cron/sprinklers.db')
+            con.row_factory=lite.Row
+            cur=con.cursor()
+            cur.execute('delete from manual where station_uid=?',(uid,))
+            cur.execute('insert into manual (station_uid,run_time,state) Values(?,?,?)',(uid,runtimestring,state,))
+            con.commit()
+            con.close()
+            self.factory.broadcast(json.dumps({'cmd':'update_manuals'}))
+        if(cmd=='manualend'):
+            uid=msg['uid']
+            con = lite.connect('/home/pi/cron/sprinklers.db')
+            con.row_factory=lite.Row
+            cur=con.cursor()
+            cur.execute('delete from manual where uid=?',(uid,))
+            con.commit()
+            con.close()
+            self.factory.broadcast(json.dumps({'cmd':'update_manuals'}))
+##      if not isBinary:
+##         msg = "{} from {}".format(payload.decode('utf8'), self.peer)
+##         print msg
+##         #self.factory.broadcast(msg)
 
    def connectionLost(self, reason):
       WebSocketServerProtocol.connectionLost(self, reason)
@@ -57,46 +89,49 @@ class BroadcastServerFactory(WebSocketServerFactory):
    """
 
    def __init__(self, url, debug = False, debugCodePaths = False):
-	WebSocketServerFactory.__init__(self, url, debug = debug, debugCodePaths = debugCodePaths)
-	self.clients = []
-	self.tickcount = 0
-	self.tempstatus=None
-	self.sprinkler_status=spinklercontrol()
-	self.tick()
-
-
+      WebSocketServerFactory.__init__(self, url, debug = debug, debugCodePaths = debugCodePaths)
+      self.clients = []
+      self.tickcount = 0
+      self.tempstatus=None
+      self.sprinkler_status=spinklercontrol()
+	  
+      reactor.callLater(5, self.tick)
    def tick(self):
-	self.tickcount += 1
-	try:
-		self.sprinkler_status=spinklercontrol()
-		if(self.tempstatus!=self.sprinkler_status):#send sprinkler status on status change
-			self.broadcast(json.dumps({"status":self.sprinkler_status}))
-			self.tempstatus=self.sprinkler_status
-		if(self.tickcount>=100):#send status every 10 seconds
-			self.broadcast(json.dumps({"status":self.sprinkler_status}))
-			self.tempstatus=self.sprinkler_status
-			self.tickcount=0
-			print 'tick',time.time()
-	except Exception:
-		sleep(1)
-		print time.asctime()
-		pass
-	reactor.callLater(.1, self.tick)
-
+       self.ticking=False
+       self.tickcount += 1
+       print 'ticking'	
+       temp = spinklercontrol()
+       if(str(temp)!="-1"):
+        self.sprinkler_status=temp
+       if(len(self.clients)):
+			if(self.tempstatus!=self.sprinkler_status):
+				self.broadcast(json.dumps({"status":self.sprinkler_status}))
+				self.tempstatus=self.sprinkler_status
+			if(self.tickcount>=100):
+				self.broadcast(json.dumps({"status":self.sprinkler_status}))
+				self.tempstatus=self.sprinkler_status
+				self.tickcount=0
+			reactor.callLater(1, self.tick)
+       else:
+		reactor.callLater((60-time.localtime()[5])/6, self.tick)
    def register(self, client):
-	if not client in self.clients:
-		rint("registered client {}".format(client.peer))
-		self.clients.append(client)
-		self.sprinkler_status=status
-		self.broadcast(json.dumps({"status":self.sprinkler_status}))
+      #print 'hey welcome'
+      if not client in self.clients:
+         writelog("registered client {}".format(client.peer))
+         self.clients.append(client)
+         self.broadcast(json.dumps({"status":self.sprinkler_status}))
+
    def unregister(self, client):
       if client in self.clients:
          print("unregistered client {}".format(client.peer))
          self.clients.remove(client)
+
    def broadcast(self, msg):
+      #print("broadcasting message '{}' ..".format(msg))
       for c in self.clients:
          c.sendMessage(msg.encode('utf8'))
-         
+         #print("message sent to {}".format(c.peer))
+
 
 class BroadcastPreparedServerFactory(BroadcastServerFactory):
    """
@@ -121,38 +156,58 @@ class MyProcessProtocol(protocol.ProcessProtocol):
 		result='done!'
 class schedule(Resource):
 	def render_GET(self,request):
-		#print request.args
+		if (request.args['cmd'][0]=='getWeeklySched'):
+			con = lite.connect('/home/pi/cron/sprinklers.db')
+			con.row_factory=lite.Row
+			cur=con.cursor()
+			rows=cur.execute('select *,datetime ( datetime ( date ( \'now\' , \'localtime\' ) , \'+\' || schedule . time_of_day ) , \'+\' || schedule . run_time ) as endTime from schedule left join stations on schedule.station_uid=stations.uid order by day_of_week,time_of_day asc').fetchall()
+			con.commit()
+			con.close()
+			return json.dumps( [dict(ix) for ix in rows] )
 		if(request.args['cmd'][0]=='get'):
 			station_id=request.args['uid'][0]
 			request.setHeader("content-type", "application/json")
-			con = lite.connect('sprinklers.db')
+			con = lite.connect('/home/pi/cron/sprinklers.db')
 			con.row_factory=lite.Row
 			cur=con.cursor()
 			rows=cur.execute('select * from schedule left join stations on schedule.station_uid=stations.uid where station_uid=? order by day_of_week,time_of_day asc',(station_id,)).fetchall()
 			con.commit()
 			con.close()
 			return json.dumps( [dict(ix) for ix in rows] )
-		else:
-			return ''
+        #else:
+		#	return ''
+
 	def render_POST(self,request):
 		#print request.args
+		if(request.args['cmd'][0]=='move'):
+			schedule_id=request.args['uid'][0]
+			new_day = request.args['newday'][0]
+			print schedule_id,new_day
+			con = lite.connect('/home/pi/cron/sprinklers.db')
+			con.row_factory=lite.Row
+			cur=con.cursor()
+			cur.execute("Update schedule set day_of_week=? where uid=?",(new_day,schedule_id,))
+			con.commit()
+			con.close()
+			return json.dumps({'done':True})
 		if(request.args['cmd'][0]=='add'):
 			station_id=request.args['uid'][0]
 			day=request.args['day'][0]
 			startTime=request.args['startTime'][0]
-			runTime=request.args['runTime'][0]
+			runTime=int(request.args['runTime'][0])
 			request.setHeader('content-type','application/json')
-			con = lite.connect('sprinklers.db')
+			con = lite.connect('/home/pi/cron/sprinklers.db')
 			con.row_factory=lite.Row
 			cur=con.cursor()
-			cur.execute("Insert into schedule (station_uid,day_of_week,time_of_day,run_time) Values(?,?,?,?)",(station_id,day,startTime,runTime.zfill(2),))
+			timestring=str(runTime/60).zfill(2)+":"+str(runTime%60).zfill(2)
+			cur.execute("Insert into schedule (station_uid,day_of_week,time_of_day,run_time) Values(?,?,?,?)",(station_id,day,startTime,timestring,))
 			id=cur.execute('select uid from schedule order by uid desc limit 1').fetchall()
 			con.commit()
 			con.close()
 			return json.dumps({'newuid':int(id[0][0])})
 		if(request.args['cmd'][0]=='remove'):
 			uid=request.args['uid'][0]
-			con = lite.connect('sprinklers.db')
+			con = lite.connect('/home/pi/cron/sprinklers.db')
 			con.row_factory=lite.Row
 			cur=con.cursor()
 			cur.execute("Delete from schedule where uid='{0}'".format(uid))
@@ -160,10 +215,20 @@ class schedule(Resource):
 			con.close()
 			return json.dumps({'response':True,'uid':uid})
 		return ''
+class manual(Resource):
+    def render_GET(self,request):
+        con = lite.connect('/home/pi/cron/sprinklers.db')
+        con.row_factory=lite.Row
+        cur=con.cursor()
+        rows=cur.execute('select uid,start_time,run_time,state,station from getmanuals').fetchall()
+        con.commit()
+        con.close()
+        return json.dumps( [dict(ix) for ix in rows] )
+#get manual table for client
 class sChange(Resource):
 	def render_GET(self,request):
 		request.setHeader("content-type", "application/json")
-		con = lite.connect('sprinklers.db')
+		con = lite.connect('/home/pi/cron/sprinklers.db')
 		con.row_factory=lite.Row
 		cur=con.cursor()
 		rows=cur.execute('select * from stations').fetchall()
@@ -185,7 +250,7 @@ class sChange(Resource):
 			con.commit()
 			con.close()
 			request.setHeader("content-type", "text/html")
-			return '<html><head><script>window.location="sprinklers.html"</script></head></html>'
+			return '<html><head><script>window.location="/#stationsetup"</script></head></html>'
 		if(request.args['cmd'][0]=='add'):
 			station = request.args["station"][0]
 			port = request.args["koyo_output"][0]
@@ -206,8 +271,20 @@ class sChange(Resource):
 			con.commit()
 			con.close()
 			return json.dumps({'removed':uid})
+def sendEmail(msg,to,From):
+    smtpObj=smtplib.SMTP('smtp.gmail.com',587)
+    usr=From
+    pwd=''
+    smtpObj.ehlo()
+    smtpObj.starttls()
+    smtpObj.ehlo
+    smtpObj.login(usr,pwd)
+    header = 'To:'+'\n'+'From:'+From+'\n'+'Subject: \n'
+    Msg = header+'\n'+msg
+    smtpObj.sendmail(usr,to,msg)
+    smtpObj.close()
 def loadStationInfo():
-    con = lite.connect('sprinklers.db')
+    con = lite.connect('/home/pi/cron/sprinklers.db')
     con.row_factory=dict_factory
     cur=con.cursor()
     items=cur.execute('select * from stations').fetchall()
@@ -215,7 +292,7 @@ def loadStationInfo():
     con.close()
     return items
 def checkManualTable():
-    con = lite.connect('sprinklers.db')
+    con = lite.connect('/home/pi/cron/sprinklers.db')
     con.row_factory=dict_factory
     cur=con.cursor()
     items=cur.execute('select * from getmanuals').fetchall()
@@ -223,7 +300,7 @@ def checkManualTable():
     con.close()
     return items
 def loadScheduled():
-    con = lite.connect('sprinklers.db')
+    con = lite.connect('/home/pi/cron/sprinklers.db')
     con.row_factory=dict_factory
     cur=con.cursor()
     items = cur.execute('select * from getcurrent').fetchall()
@@ -231,71 +308,103 @@ def loadScheduled():
     con.close()
     return items
 def spinklercontrol():
-    global status
+    #print time.time()
     stations=loadStationInfo()
     scheduled = loadScheduled()
     new_list=[]
-    controller=Koyo.Koyo('0.0.0.0')
-    status=controller.ReadC_All()
-# go through the result if any and turn on the sprinkler if it isn't on already
-    for item in scheduled:
-        koyo_port=item['koyo_output']
-        if(not controller.ReadC(koyo_port)):
-            controller.WriteC(koyo_port, 1)
-        new_list.append(koyo_port)
-        #print new_list
-        #print item['station']
-#go through the manual table to see whether to turn on or off stations
-    manuals = checkManualTable()
-    for manual in manuals:
-        koyo_port=manual['koyo_output']
-        if(manuals['state']):
-            controller.WriteC(koyo_port,1)
-            if(not new_list.count(koyo_port)):
-                new_list.append(koyo_port)
-        else:
-            controller.WriteC(koyo_port,0)
-            new_list.remove(koyo_port)
-# go through the stations and turn off the ones that aren't returned in the both queries
-    for station in stations:
-        #print station
-        koyo_port=station['koyo_output']
-        if(new_list.count(koyo_port) == 0  and controller.ReadC(koyo_port)):
-            controller.WriteC(koyo_port,0)
-    status=controller.ReadC_All()
-    return status
+    controller=Koyo.Koyo('10.10.55.118')
+    temp = str(controller.ReadC_All())
+    if(temp!="-1"):
+		status=temp
+		#print list(status)
+		# go through the result if any and turn on the sprinkler if it isn't on already
+		for item in scheduled:
+			koyo_port=item['koyo_output']
+			if(not int(status[koyo_port])):
+				controller.WriteC(koyo_port, 1)
+			new_list.append(koyo_port)
+			#print new_list
+			#print item['station']
+	#go through the manual table to see whether to turn on or off stations
+		manuals = checkManualTable()
+		for manual in manuals:
+			koyo_port=manual['koyo_output']
+			if(int(manual['state'])):
+				controller.WriteC(koyo_port,1)
+				if(not new_list.count(koyo_port)):
+					new_list.append(koyo_port)
+			else:
+				controller.WriteC(koyo_port,0)
+				if(new_list.count(koyo_port)>0):
+					new_list.remove(koyo_port)
+	# go through the stations and turn off the ones that aren't returned in the both queries
+		for station in stations:
+			#print station
+			koyo_port=station['koyo_output']
+			if(new_list.count(koyo_port) == 0  and int(status[koyo_port])):
+				controller.WriteC(koyo_port,0)
+		return controller.ReadC_All()
 def dict_factory(cursor, row):
         d = {}
         for idx, col in enumerate(cursor.description):
             d[col[0]] = row[idx]
         return d
-if __name__ == '__main__':
+def main():
+   writelog('starting server')
    if len(sys.argv) > 1 and sys.argv[1] == 'debug':
       log.startLogging(sys.stdout)
       debug = True
+	  #print 'debuggin'
    else:
       debug = False
+   log.startLogging(DailyLogFile.fromFullPath("/var/log/sprinkler.log"))
+   debug = True
    contextFactory = ssl.DefaultOpenSSLContextFactory('/home/pi/cron/keys/server.key',
 			'/home/pi/cron/keys/server.crt')
    ServerFactory = BroadcastServerFactory
+   #ServerFactory = BroadcastPreparedServerFactory
+
    factory = ServerFactory("wss://localhost:5000",
                            debug = debug,
                            debugCodePaths = debug)
    factory2 = ServerFactory("ws://localhost:5001",
                            debug = debug,
                            debugCodePaths = debug)
+
    factory.protocol = BroadcastServerProtocol
    factory.setProtocolOptions(allowHixie76 = True)
    factory2.protocol = BroadcastServerProtocol
    factory2.setProtocolOptions(allowHixie76 = True)
    listenWS(factory2)
    listenWS(factory,contextFactory)
-   webdir = File("sprinklerwww/")
+   webdir = File("/home/pi/cron/sprinklerwww/")
    web = Site(webdir)
    web.protocol = HTTPChannelHixie76Aware
    webdir.contentTypes['.crt'] = 'application/x-x509-ca-cert'
+   print 'starting server'
    webdir.putChild("sChange",sChange())
    webdir.putChild("schedule",schedule())
-   reactor.listenTCP(80, web)
-   reactor.listenSSL(443,web,contextFactory)
+   webdir.putChild("manual",manual())
+   #reactor.listenTCP(8080, web)
+   reactor.listenSSL(8081,web,contextFactory)
    reactor.run()
+   #mysprinkler.stoploop()
+if __name__ == "__main__":
+  try:
+    pid = fork()
+    if pid > 0:
+      exit(0)
+  except OSError, e:
+    exit(1)
+
+  chdir("/")
+  setsid()
+  umask(0)
+
+  try:
+    pid = fork()
+    if pid > 0:
+      exit(0)
+  except OSError, e:
+     exit(1)
+  main()

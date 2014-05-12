@@ -1,10 +1,11 @@
 <html>
 	<head>
 		<meta name="viewport" content="initial-scale=1, maximum-scale=1"/>
-		<meta name="apple-mobile-web-app-status-bar-style" content="black">
+		<meta name="apple-mobile-web-app-status-bar-style" content="transparent">
 		<meta content="yes" name="apple-mobile-web-app-capable"/>
 		<meta name="apple-mobile-web-app-title" content="Sprinklers">
 		<link rel="stylesheet" href="Scripts/jquery.mobile-1.4.2.min.css" />
+		<link rel='stylesheet' href='Scripts/jquery-ui-1.10.4.custom.min.css' />
 		<!-- iOS 7 iPad (retina) -->
         <link href="/images/irrigation-152x152.png"
               sizes="152x152"
@@ -86,13 +87,33 @@
               rel="apple-touch-startup-image">
 		<script src="Scripts/jquery-2.0.3.min.js"></script>
 		<script src="Scripts/jquery.mobile-1.4.2.min.js"></script>
+		<script src="Scripts/jquery-ui-1.10.4.custom.min.js"></script>
+		<script src="Scripts/jquery.ui.touch-punch.js"></script>
+		
 		<script src='Scripts/freewall.js'></script>
 		<script>
 			var webSocket;
-			function welcomeback()
-			{
-				if(webSocket.CLOSED){
-					ws();
+			function minutes_2_hhmm(minutes){
+				if(parseInt(minutes/60)>0){
+					hours=(parseInt(minutes/60))
+					if(hours>1)
+						text=hours+=' hrs';
+					else
+						text=hours+=' hr';
+				}
+				else
+					hours='';
+				return hours+' '+minutes%60+' min'
+				
+			}
+			function welcomeback(){
+				if(webSocket!=undefined){
+					if(webSocket.readyState==webSocket.CLOSED){
+						//webSocket.close();
+						//ws();
+						//console.log('reconnecting to websocket');
+						//alert('welcome back');
+					}
 				}
 			}
 			function tConvert (time) {
@@ -118,10 +139,37 @@
 				$('#edit_station').val(stationName);
 				
 			}
-			function addStationLine()
-			{
+			function addStationLine(){
 				
 				$('#stationList tbody').append($('#template').clone().attr('id','new').fadeIn());
+			}
+			function getManualItems(){
+				
+				$.getJSON('manual',function(data){
+				$('.manualItems').remove();
+									$(data).each(function(i,d){
+										
+										row=$('#manualItemTemplate').clone();
+										$(row).find('#mname').html(d.station);
+										length = d.state?"on":"Off";
+										min=parseInt(d.run_time.split(":")[0])*60
+										length += " for "+ (min>0?min.toString()+" ":"")+parseInt(d.run_time.split(":")[1])+' min';;
+										$(row).find('#mlength').html(length)
+										$(row).show();
+										$(row).find('button').data('uid',d.uid);
+										$(row).addClass('manualItems');
+										$('#manual_items').append(row);
+									});
+								
+								});
+			
+			}
+			function manualend(item){
+				mydata ={};
+				mydata.cmd='manualend';
+				mydata.uid=$(item).data('uid');
+				webSocket.send(JSON.stringify(mydata));
+			
 			}
 			function ws() {
 				var iOS = ( navigator.userAgent.match(/(iPad|iPhone|iPod)/g) ? true : false );
@@ -133,9 +181,14 @@
 				$.mobile.loading( "hide");
 				}
 				webSocket.onmessage = function(e) {
-						data = $.parseJSON(e.data)
-						
-						parseData(data);
+						if($.parseJSON(e.data)['cmd']){
+							if($.parseJSON(e.data)['cmd']=="update_manuals")
+								getManualItems();
+						}
+						else{
+							data = $.parseJSON(e.data)
+							parseData(data);
+						}
 						//console.log("Got echo: " + e.data);
 						$.mobile.loading( "hide");
 					}
@@ -156,30 +209,74 @@
 					binary = data.status
 					for(x=0;x<binary.length;x++)
 						{
-							row = $('#status_'+x);
+							row = $('.status_'+x);
 							status_bin=(binary[x]=='1') ? "true":"false";
-							$(row).css('background',$(row).data(status_bin));
+							$(row).each(function(n,d){
+								$(d).css('background',$(d).data(status_bin+'backcolor'));
+								$(d).css('color',$(d).data(status_bin+'forecolor'));
+								$(d).html($(d).data(status_bin+'text'));
+							});
 						}
-					//console.log(data);}
+					console.log(data);}
 				}
+////////////////////////////////////////////////////////////////////				
 			$(document).ready(function(){
+			
+			$('#meh').bind('heightChange',function(){
+				console.log(this);
+			});
+				$('.box').droppable({
+						drop: function(event,ui){
+							if($(ui.draggable).parent().parent().data('day')!= $(event.target).data('day')){
+								var newdata ={};
+								newdata.cmd = 'move';
+								newdata.uid = $(ui.draggable).data('uid');
+								newdata.newday = $(event.target).data('day');
+								
+								$.ajax({
+									type:"POST",
+									url:"schedule",
+									data:newdata,
+								}).done(function(meh){
+									getAndParseSchedule();
+								});
+							}
+						}
+					});/*
 				$(function(){
 					var wall = new freewall("#container");
 					wall.fitWidth();
 				
+				});*/
+				$('#schedulesetup').on('pageshow',function(event){
+					getAndParseSchedule();
 				});
 				$.getJSON('sChange',function(data)
 				{
 					$(data).each(function(p,d){
 						//console.log(p,d.station)
 						row = $('#template2').clone();
-						$(row).find('.status').attr('id','status_'+d.koyo_output);
+						mrow=$('#manualstation_list').clone();
+						$(mrow).find('#mname').html(d.station);
+						$(row).find('.status').addClass('status_'+d.koyo_output);
+						$(mrow).find('.runstatus').addClass('status_'+d.koyo_output);
 						$(row).find('.station div').html('<b>'+d.station+'</b>').attr('href','#stationschedule');
 						$(row).find('.port').html(d.koyo_output);
 						$(row).find('.delete').data('uid',d.uid);
 						$(row).attr('id',d.uid).show().trigger('refresh');
 						$(row).data('stationName',d.station);
+						$(mrow).find('button').data('uid',d.uid);
+						$(mrow).find('.ui-grid-a').show().trigger('refresh');
+						$(mrow).removeAttr('id');
 						$('#stationList tbody').append(row);
+						isthereYet=$('#manual_station_box .ui-collapsible-content').length
+						if(isthereYet)
+							$('#manual_station_box .ui-collapsible-content').append(mrow);
+						else
+							$('#manual_station_box').append(mrow);
+						$('#manual_station_box').trigger('refresh');
+						//fill manual table
+						
 					});
 					ws();
 					addDeleteListener();
@@ -208,6 +305,7 @@
 						$(this).children().popup('close')
 					});
 				});
+				getManualItems();
 			});
 			function addDeleteListener(){
 				$('.delete').on('click',function(item){
@@ -303,6 +401,113 @@
 				}
 				
 			}
+			function zeroPad(num, places) {
+			  var zero = places - num.toString().length + 1;
+			  return Array(+(zero > 0 && zero)).join("0") + num;
+			}
+			var checker,dom2check;
+			function getAndParseSchedule(){
+				$.mobile.loading( "show", {
+						text: 'loading..',
+						textVisible: true,
+						theme: 'c',
+						textonly: false					
+					 });
+				
+				var mydata={};
+				mydata.cmd='getWeeklySched'
+				$('.weeklyItems').remove();
+				$.ajax({
+				type:"GET",
+				url:"schedule",
+				data:mydata,
+				dataType:'json'
+				}).done(function(items){
+					$(items).each(function(i,d){
+						day=d.day_of_week;
+						var row = $('#draggableschedule').clone();
+						var endTime = new Date(d.endTime);
+						$(row).find('.dayStation').html(d.station);
+						$(row).find('.dayStartTime').html('On: '+tConvert(d.time_of_day));
+						$(row).find('.dayRunTime').html(endTime.toLocaleTimeString());
+						$(row).data('uid',d.uid);
+						$(row).css('min-height','40px');
+						$(row).css('height',(40+parseInt(d.run_time.split(':')[0])+parseInt(d.run_time.split(':')[1])).toString()+"px")
+						$(row).find('.runtimeText').html(minutes_2_hhmm(parseInt(d.run_time.split(':')[0])+parseInt(d.run_time.split(':')[1])))
+						$(row).show();
+						$(row).addClass('weeklyItems');
+						$('*[data-day="'+day+'"]').find('.sched').append(row);
+					});
+					$('.weeklyItems').resizable({
+				helper: "ui-resizable-helper",
+				handles:"s",
+				maxHeight:540,
+				minHeight:40,
+				maxWidth:236,
+				minWidth:236,
+				animate: true,
+				resize: function( event, ui ) {
+						$('.ui-resizable-resizing').find(".runtimeText").html(minutes_2_hhmm($('.ui-resizable-helper').height()-40));		
+				},
+				alsoResize: '#meh',
+				stop:function(event,ui){
+					$('.weeklyItems').css({
+						position: "",
+						top: "",
+						left: ""
+					});
+					//clearInterval(checker);
+				},
+				start:function(event,ui){
+					/*dom2check=$(this);
+					checker=setInterval(
+						function(){
+							$('.ui-resizable-resizing').find(".runtimeText").html(minutes_2_hhmm($('.ui-resizable-helper').height()-40));
+						}
+						,100);*/
+					$('.weeklyItems').css({
+						position: "",
+						top: "",
+						left: ""
+					});
+					$('#meh').trigger('heightChange');
+					$('.ui-resizable-helper').bind('resize',function(){
+						console.log($(this).height()-40);
+					});
+				}
+				}).draggable({scroll: true, revert: "valid",snap:'.box',snapMode:"inner" });
+					
+					$.mobile.loading( "hide");
+				});
+				
+				
+				
+			}
+			function manualstart(station,state){
+				$('#manualstart').popup("open");
+				$('#cmd_manual').text(state==1?"Turn On":"Turn Off");
+				$('#manualstartname h2').html($(station).closest('#manualTemplate').find('#mname').html());
+				$('#cmd_manual').data('uid',$(station).data('uid'));
+				$('#cmd_manual').data('state',state);
+			}
+			function Do_manualstart(who){
+				$.mobile.loading( "show", {
+						text: 'Starting..',
+						textVisible: true,
+						theme: 'a',
+						textonly: false
+											
+					 });
+				var thedata={};
+				thedata.uid=$(who).data('uid');
+				thedata.cmd='manualstart';
+				thedata.howlong=$('#manual_time').val();
+				thedata.state=$(who).data('state');
+				webSocket.send(JSON.stringify(thedata));
+				$.mobile.loading( "hide");
+			
+			
+			}
 			function addSchedule(station)
 			{
 				var mydata={};
@@ -375,6 +580,7 @@
 						textonly: false
 											
 					 });
+					
 					$.ajax({
 						type:"POST",
 						url:'sChange',
@@ -397,12 +603,75 @@
 			}
 			function changeOptionText()
 			{
-			
 				$('#dayAdd').prev().html($("#dayAdd option[value='"+$('#dayAdd').val()+"']").text());
+			}
+			function allowDrop(ev)
+			{
+				ev.preventDefault();
+			}
+			function drop(ev)
+			{
+			
+				var newdata ={}
+				newdata.cmd = 'move'
+				newdata.uid = ev.dataTransfer.getData('uid')
+				newdata.newday = $(ev.target).data('day');
+				$.ajax({
+				type:"POST",
+				url:"schedule",
+				data:newdata,
+				}).done(function(meh){
+					getAndParseSchedule();
+				});
+			}
+			function drag(ev)
+			{
+				ev.dataTransfer.setData("uid",$(ev.target).data('uid'));
 			}
 		</script>
 		<style>
+			.ui-resizable-handle{
+				height:14px;
+			}
 			
+			.ui-resizable-helper { border: 2px dotted #00F; height:40px}
+			.box {
+				min-height:154px;
+				width:240px;
+				display:inline-block;
+				background:rgba(41, 128, 185,.8);
+				vertical-align:top;
+			
+			}
+			.runtimeText{
+				font-size:x-large;
+				font-weight:bolder;
+				opacity:.8;
+				text-align:center;
+			}
+			.weeklyItems
+			{
+				margin:2px;
+			}
+			.daystartTime{
+				text-align:right;
+				font-weight:bold;
+				float:right;
+			}
+			.dayStation{
+				text-align:left;
+				font-weight:700;
+				float:left;
+			}
+			.dayrunTime{
+				text-align:right;
+				float:right;
+				display:block;
+				font-weight:700;
+				position:absolute;
+				bottom:0px;
+				right:0px;
+			}
 			td{
 				text-align:center;
 				vertical-align:middle;
@@ -465,23 +734,110 @@
 			{
 			border-bottom: 1px solid #d6d6d6;
 			}
+			.sched{
+				padding:0px;
+			}
 		</style>
 			
 	</head>
-	<body pageShow='welcomeback();alert('hey')'>
+	<body onfocus='welcomeback()' onpageshow='welcomeback()'>
 	<div data-role='page' id='mainmenu'>
 		<div data-role='header'><h3>Sprinklers</h3></div>		
-		<div role='main' class='ui-content'>
-			<a data-role='button' href="#stationsetup" style='max-width:320px;margin:auto;'>Spinkler Station Setup</a>
-			<a data-role='button' href="#schedulesetup" style='max-width:320px;margin:auto;'>Station Scheduling</a>
+		<div role='main' class='ui-content content'>
+			<a data-role='button' href="#stationsetup" data-transition='slidefade'  style='max-width:320px;margin:auto;'>Sprinkler Station Setup</a>
+			<a data-role='button' href="#schedulesetup" data-transition='slidefade'  style='max-width:320px;margin:auto;'>Daily Scheduling</a>
 			
-			<div data-role='collapsible' data-theme='b' id='manual_station_box' style='max-width:320px;border:1px solid silver;margin:auto;'>
+			<div data-role='collapsible' data-theme='b' id='manual_station_box' style='max-width:355px;border:1px solid silver;margin:auto;'>
 				<h4>Manual</h4>
-				<div id='manualstation_list'></div>
+				<div id='manualstation_list'>
+					<div class='ui-grid-a' id='manualTemplate' style='display:none;margin-bottom:2px' >
+						<div class='ui-block-a'><div id='mname' style='text-align: center;font-size: large;font-weight: bold;'>Station Template</div>
+						<div style='text-align:center;' class='runstatus' data-truetext='(Watering)' data-falsetext='(Off)' data-trueforecolor='blue' data-falseforecolor='silver'>Running</div>
+						</div>
+							<div class='ui-block-b'>
+								<button onclick='manualstart(this,1)' style='max-width: 48%;margin: auto;float:left'>On</button>
+								<button onclick='manualstart(this,0)' style='max-width: 48%;margin: auto;float:right;'>Off</button>
+							</div>
+					</div>
+				</div>
 			</div>
+				<div id='manual_items' style='max-width:345px;min-height:150px; border:1px solid silver;margin:auto; padding:5px;border-radius:8px;'>
+					<div class='ui-bar-b' style='text-align:center'>Stations with Manual Changes</div>
+					<div class='ui-grid-a' id='manualItemTemplate' style='padding:5px;display:none;margin-bottom:2px' >
+						<div class='ui-block-a'>
+							<div id='mname' style='text-align: center;font-size: large;font-weight: bold;'>Station Template</div>
+							<div id='mlength' style='text-align:center'></div>
+						</div>
+						<div class='ui-block-b'>
+							<button onclick='manualend(this)' style='max-width: 165px;margin: auto;'>Cancel</button>
+						</div>
+					</div>
+				</div>
+			</div>
+		<div data-role='popup' draggable='true' id='manualstart' style='border:2px solid blue;width:320px'>
+			<div id='manualstartname' data-role='header' data-fixed='true'>
+				<h2></h2>
+			</div>
+			<input type='text' style='margin:auto;font-weight:bolder' id='manual_time' value='5' />
+			<button style='width:100px' id='cmd_manual'	onclick='Do_manualstart(this)'></button>
+			<button data-theme='b' style='width:50%;margin:auto;' onclick="$('#manualstart').popup('close');">Cancel</button>
+			
 		</div>
 	</div>
-	
+	<div data-role='page' id='schedulesetup'>
+		<div data-role='header'>
+		<a href='#mainmenu' data-role='back' data-icon='back'>Back</a>
+		<h4>Sprinkler Schedule</h4></div>
+		<div id='daywall' data-role='content' data-enhance='false'>
+			<div class='box ui-widget-content' data-day='0' id='Mon'><div data-role='header'><h4>Monday</h4></div><ul class='sched'></ul></div>
+			<div class='box' data-day='1' id='Tue'><div data-role='header'><h4>Tuesday</h4></div><ul class='sched'></ul></div>
+			<div class='box' data-day='2' id='Wed'><div data-role='header'><h4>Wednesday</h4></div><ul class='sched'></ul></div>
+			<div class='box' data-day='3' id='Thu'><div data-role='header'><h4>Thursday</h4></div><ul class='sched'></ul></div>
+			<div class='box' data-day='4' id='Fri'><div data-role='header'><h4>Friday</h4></div><ul class='sched'></ul></div>
+			<div class='box' data-day='5' id='Sat'><div data-role='header'><h4>Saturday</h4></div><ul class='sched'></ul></div>
+			<div class='box' data-day='6' id='Sun'><div data-role='header'><h4>Sunday</h4></div><ul class='sched'></ul></div>
+		</div>
+		<script>
+		/*$(function(){
+			$('.sched').sortable({
+				connectWith: ".sched",
+				placeholder: "ui-state-highlight"
+				})	
+		});
+		var wall;/*
+		$(function(){
+			var wall = new freewall('#daywall');
+			wall.reset({
+				selector:'.box',
+				animate: true,
+				fillGap: false,
+				fillHoles:true,
+				cellW: 240,
+				cellH: 320,
+				onResize:function(){
+					wall.refresh();
+				}
+			});
+			wall.fitWidth();
+		});
+		*/
+		//$(window).trigger("resize");
+		/*freewall.createPlugin({
+			centering: function(setting, container) {
+				var runtime = setting.runtime;
+				this.addCustomEvent("onGridArrange", function(setting) {
+					var gridWidth = container.attr("data-wall-width") * 1;
+					var realWidth = container.width();
+					var offsetLeft = (realWidth - gridWidth) / 2;
+					for (var i in runtime.blocks) {
+						var block = runtime.blocks[i];
+						block.left != null && (block.left += offsetLeft);
+					}
+				});
+			}
+		})*/
+		</script>
+	</div>
 	<div data-role='page' id='stationsetup' data-url='stationsetup'>
 		<div data-role='header'>
 			<a href='#mainmenu' data-role='back' data-icon='back'>Back</a>
@@ -574,7 +930,7 @@
 				</thead>
 				<tbody>
 				<tr style='display:none' id='template2'>
-					<td data-uid='' class='status' data-true='blue' data-false='gray'></td>
+					<td data-uid='' class='status' data-truebackcolor='blue' data-falsebackcolor='gray'></td>
 					<td data-uid='' style='width:150px;max-height:54px;' class='station' onclick='getStationSchedule($(this).parent().attr("id"))' >
 						<div  class='stationpopup ui-btn ui-input-btn ui-corner-all ui-shadow'  data-type='button'></div>
 					</td>
@@ -608,5 +964,17 @@
 		</div>
 		<div style='display:none' class='mycontent' data-role='content' id='scheduleContent'>
 		</div>
+		<div class='weeklyItem ui-grid-a' style='display:none;background:white;border-bottom;5px green; min-width:236px; max-width:236px;' id='draggableschedule'>
+			<div class='dayStation ui-block-a'></div>
+			<div class='daystartTime ui-block-b'></div>
+			<br>
+			<div class='runtimeText ui-block-a'></div>
+			<div class='dayrunTime ui-block-b'></div>
+		</div>
 	</body>
+	
+	
+	
+	
+	
 </html>
