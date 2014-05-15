@@ -24,6 +24,5 @@ try:
   fan.changeDutyCycle(cycle)
 except KeyboardInterrupt:
   fan.stop()
-  fan2.stop()
   pass
  
