@@ -1,0 +1,57 @@
+<html>
+	<head>
+		<meta name="viewport" content="initial-scale=1, maximum-scale=1"/>
+		<meta content="yes" name="apple-mobile-web-app-capable"/>
+		<script src='https://code.jquery.com/jquery-2.1.1.min.js'></script>
+		<style>
+			body {
+				background: white;
+			}
+
+			#c {
+				width: 100%x;
+				/*height: 480px;*/
+				text-align:center;
+				margin:auto;
+			}
+
+			#v {
+				position: absolute;
+				top: 50%;
+				left: 50%;
+				margin: -180px 0 0 -240px;
+			}
+		</style>
+		
+	</head>
+	<body>
+		<img id='c'></img><br/>
+		<button onclick='cmd("cmd","showpreview")'>preview</button>
+		<button onclick='cmd("cmd","hidepreview")'>hide preview</button><br>
+		<input type='range' min=0 max=30 onchange='cmd("framerate",this.value)' />
+		<script>
+		//function for sending commands to websocket server
+			function cmd(ch,msg){
+				webSocket.send('{"'+ch+'":"'+msg+'"}');
+			}
+			var webSocket;
+			function ws(){
+				webSocket=webSocket = new WebSocket("ws://"+window.location.hostname+":9000/");
+				webSocket.onopen=function(){
+					console.log("opened");
+				}
+				webSocket.onmessage=function(data){
+					image = $('#c')[0]
+					image.src='data:image/jpeg;base64,'+ data.data
+				}
+				webSocket.ondata=function(){
+					console.log("msg received");
+				}
+			}
+			$(document).ready(function(){
+				ws();
+			});
+		</script>
+	</body>
+</html>
+
