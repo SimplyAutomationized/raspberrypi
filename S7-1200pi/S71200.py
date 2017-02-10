@@ -103,7 +103,7 @@ class S71200():
 			length=4
 			start=int(mem.lower().replace('freal',''))
 			out=output().real
-			print data
+			#print data
 			set_real(data,0,value)
 		return self.plc.write_area(area,0,start,data)
 		
